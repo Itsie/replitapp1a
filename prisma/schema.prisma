@@ -1,0 +1,266 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum OrderSource {
+  JTL
+  INTERNAL
+}
+
+enum Department {
+  TEAMSPORT
+  TEXTILVEREDELUNG
+  STICKEREI
+  DRUCK
+  SONSTIGES
+}
+
+enum WorkflowState {
+  ENTWURF
+  NEU
+  PRUEFUNG
+  FUER_PROD
+  IN_PROD
+  WARTET_FEHLTEILE
+  FERTIG
+  ZUR_ABRECHNUNG
+  ABGERECHNET
+}
+
+enum QCState {
+  IO
+  NIO
+  UNGEPRUEFT
+}
+
+enum TimeSlotStatus {
+  PLANNED
+  RUNNING
+  PAUSED
+  DONE
+  BLOCKED
+}
+
+enum JTLRowType {
+  NORMAL
+  BUNDLE_PARENT
+  BUNDLE_CHILD
+  SHIPPING
+  CREDIT
+}
+
+enum Role {
+  ADMIN
+  PROD_PLAN
+  PROD_RUN
+  SALES_OPS
+  ACCOUNTING
+  LAGER
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  role      Role     @default(SALES_OPS)
+  password  String
+  createdAt DateTime @default(now())
+}
+
+model WorkCenter {
+  id                 String     @id @default(cuid())
+  name               String
+  department         Department
+  capacityMin        Int        @default(660)
+  concurrentCapacity Int        @default(2)
+  active             Boolean    @default(true)
+  timeSlots          TimeSlot[]
+}
+
+model Order {
+  id                  String             @id @default(cuid())
+  extId               String?            @unique
+  displayOrderNumber  String?            @unique
+  source              OrderSource
+  department          Department
+  title               String
+  customer            String
+  dueDate             DateTime?
+  notes               String?
+  workflow            WorkflowState      @default(NEU)
+  qc                  QCState            @default(UNGEPRUEFT)
+  location            String?
+  locationPlaceId     String?
+  locationPlace       WarehousePlace?    @relation("OrderLocation", fields: [locationPlaceId], references: [id], onDelete: SetNull)
+  company             String?
+  contactFirstName    String?
+  contactLastName     String?
+  customerEmail       String?
+  customerPhone       String?
+  billStreet          String?
+  billZip             String?
+  billCity            String?
+  billCountry         String?            @default("DE")
+  shipStreet          String?
+  shipZip             String?
+  shipCity            String?
+  shipCountry         String?
+  totalNet            Decimal?
+  totalVat            Decimal?
+  totalGross          Decimal?
+  deliveredAt         DateTime?
+  deliveredQty        Int?
+  deliveredNote       String?
+  settledAt           DateTime?
+  settledBy           String?
+  sizeTable           SizeTable?
+  printAssets         PrintAsset[]
+  orderAssets         OrderAsset[]
+  positions           OrderPosition[]
+  timeSlots           TimeSlot[]
+  invoiceQueueItem    InvoiceQueueItem?
+  warehousePlace      WarehousePlace?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+}
+
+model OrderPosition {
+  id            String   @id @default(cuid())
+  orderId       String
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  articleName   String
+  articleNumber String?
+  qty           Decimal
+  unit          String   @default("Stk")
+  unitPriceNet  Decimal
+  vatRate       Int      @default(19)
+  lineNet       Decimal
+  lineVat       Decimal
+  lineGross     Decimal
+  procurement   String   @default("NONE")
+  supplierNote  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model SizeTable {
+  id        String   @id @default(cuid())
+  orderId   String   @unique
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  scheme    String
+  rowsJson  Json
+  comment   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PrintAsset {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id])
+  label     String
+  url       String
+  required  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model OrderAsset {
+  id          String   @id @default(cuid())
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  kind        String   // "PRINT" | "FILE"
+  label       String
+  path        String?  // internal UNC path like //server/share/folder/file.pdf
+  url         String?  // hosted file url (uploaded to /uploads)
+  ext         String?
+  size        Int?     // bytes
+  required    Boolean  @default(false)  // only relevant for PRINT
+  notes       String?
+  createdAt   DateTime @default(now())
+  uploadedBy  String?  // optional user id/name
+}
+
+model TimeSlot {
+  id                        String          @id @default(cuid())
+  date                      DateTime
+  startMin                  Int
+  lengthMin                 Int
+  workCenterId              String
+  workCenter                WorkCenter      @relation(fields: [workCenterId], references: [id])
+  orderId                   String?
+  order                     Order?          @relation(fields: [orderId], references: [id])
+  blocked                   Boolean         @default(false)
+  note                      String?
+  status                    TimeSlotStatus  @default(PLANNED)
+  startedAt                 DateTime?
+  stoppedAt                 DateTime?
+  actualDurationMin         Int?
+  qc                        QCState?
+  missingPartsNote          String?
+  missingPartsReportedBy    String?
+  missingPartsReportedAt    DateTime?
+  missingPartsResolvedBy    String?
+  missingPartsResolvedAt    DateTime?
+}
+
+model JTLOrderPosition {
+  id              String     @id @default(cuid())
+  jtlOrderNumber  String
+  articleNumber   String?
+  description     String
+  quantity        Float      @default(0)
+  unitPriceGross  Float      @default(0)
+  unitPriceNet    Float?
+  taxRate         Float?
+  discountAbs     Float?
+  discountPct     Float?
+  rowType         JTLRowType @default(NORMAL)
+  parentKey       String?
+  variation       String?
+  isShipping      Boolean    @default(false)
+  isCredit        Boolean    @default(false)
+  raw             Json
+}
+
+model InvoiceQueueItem {
+  id        String   @id @default(cuid())
+  orderId   String   @unique
+  order     Order    @relation(fields: [orderId], references: [id])
+  status    String
+  comment   String?
+  createdAt DateTime @default(now())
+}
+
+model OrderSequence {
+  id      Int @id @default(autoincrement())
+  year    Int @unique
+  current Int @default(999)
+}
+
+model WarehouseGroup {
+  id          String           @id @default(cuid())
+  name        String           @unique
+  description String?
+  places      WarehousePlace[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model WarehousePlace {
+  id                String          @id @default(cuid())
+  groupId           String
+  group             WarehouseGroup  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  name              String
+  occupiedByOrderId String?         @unique
+  occupiedByOrder   Order?          @relation(fields: [occupiedByOrderId], references: [id], onDelete: SetNull)
+  ordersAtLocation  Order[]         @relation("OrderLocation")
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@unique([groupId, name])
+}
